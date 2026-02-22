@@ -374,7 +374,7 @@ def admin_logout():
 @app.route("/admin", methods=["GET"])
 @admin_required
 def admin_panel():
-    return render_template("admin.html", files=list_all_files())
+    return render_template("admin.html", files=list_all_files(), version=APP_VERSION)
 
 @app.route("/admin/delete", methods=["POST"])
 @admin_required
