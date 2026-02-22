@@ -1,22 +1,95 @@
 import os
+import json
+import secrets
 from datetime import datetime
-from flask import Flask, request, send_from_directory, render_template, redirect, url_for, flash, abort
+from functools import wraps
+
+from flask import (
+    Flask, request, render_template, redirect, url_for,
+    flash, abort, session, send_from_directory
+)
 from werkzeug.utils import secure_filename
 
 # -----------------------
 # Configuration
 # -----------------------
-UPLOAD_FOLDER = "/tmp/fichiers"
-MAX_CONTENT_LENGTH = 512 * 1024 * 1024  # 512 Mo max
+ADMIN_USER = os.environ.get("ADMIN_USER", "0")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "1")
+
+UPLOAD_FOLDER = "tmp/fichiers"
+DB_FILE = "files.json"
+BLOCKED_FILE = "blocked_ips.json"
+APP_VERSION = "0.1.0-alpha"
+
+MAX_CONTENT_LENGTH = 128 * 1024 * 1024  # 512 Mo
+
+# ✅ Liste blanche d'extensions autorisées (sans le point)
+# Ajuste selon ton besoin
+ALLOWED_EXTENSIONS = {
+    "png", "jpg", "jpeg", "gif", "webp",
+    "pdf",
+    "mp4", "webm", "avi"
+}
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
-app.secret_key = "cle-secrete-pour-flash"  # juste pour afficher des messages
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
 # -----------------------
-# Fonctions utilitaires
+# Paths helpers
+# -----------------------
+def _db_path() -> str:
+    return os.path.join(app.root_path, DB_FILE)
+
+def _blocked_path() -> str:
+    return os.path.join(app.root_path, BLOCKED_FILE)
+
+# -----------------------
+# DB JSON
+# -----------------------
+def load_db() -> dict:
+    path = _db_path()
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_db(db: dict) -> None:
+    path = _db_path()
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+# -----------------------
+# IP Blocklist JSON
+# -----------------------
+def load_blocked() -> list:
+    path = _blocked_path()
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def save_blocked(data: list) -> None:
+    path = _blocked_path()
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+# -----------------------
+# Utilitaires
 # -----------------------
 def human_size(n: int) -> str:
     units = ["o", "Ko", "Mo", "Go", "To"]
@@ -27,70 +100,326 @@ def human_size(n: int) -> str:
         i += 1
     return f"{f:.2f} {units[i]}" if i > 0 else f"{int(f)} {units[i]}"
 
-def list_files():
+def safe_ext(filename: str) -> str:
+    """
+    Retourne l'extension AVEC le point (ex: '.png'), en minuscule.
+    """
+    _, ext = os.path.splitext(filename)
+    ext = (ext or "").lower()
+    if len(ext) > 12:
+        return ""
+    return ext
+
+def allowed_file(filename: str) -> bool:
+    """
+    ✅ Vérifie si l'extension du fichier est autorisée (liste blanche).
+    """
+    ext = safe_ext(filename)  # ex: ".png"
+    if not ext:
+        return False
+    return ext[1:] in ALLOWED_EXTENSIONS  # enlève le point
+
+def generate_file_id() -> str:
+    return secrets.token_urlsafe(8).replace("-", "").replace("_", "")
+
+def get_client_ip() -> str:
+    # Sur Render / proxy : X-Forwarded-For peut contenir "ip1, ip2"
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return (request.remote_addr or "").strip()
+
+def delete_by_id(file_id: str) -> bool:
+    """Supprime fichier + entrée DB. Retourne True si supprimé."""
+    db = load_db()
+    meta = db.get(file_id)
+    if not meta:
+        return False
+
+    server_name = os.path.basename(meta.get("server_name", ""))
+    path = os.path.join(app.config["UPLOAD_FOLDER"], server_name)
+
+    if os.path.isfile(path):
+        os.remove(path)
+
+    db.pop(file_id, None)
+    save_db(db)
+    return True
+
+def file_meta(file_id: str):
+    if not file_id:
+        return None
+
+    db = load_db()
+    meta = db.get(file_id)
+    if not meta:
+        return None
+
+    server_name = os.path.basename(meta.get("server_name", ""))
+    path = os.path.join(app.config["UPLOAD_FOLDER"], server_name)
+    if not os.path.isfile(path):
+        return None
+
+    stat = os.stat(path)
+    ext = os.path.splitext(server_name)[1].lower()
+
+    # ⚠️ SVG retiré (risque XSS), sinon c'était: ... ".svg"
+    previewable = ext in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"}
+
+    return {
+        "id": file_id,
+        "original": meta.get("original_name", "unknown"),
+        "server": server_name,
+        "uploaded_at": meta.get("uploaded_at", ""),
+        "ip": meta.get("ip", ""),  # ✅ pour admin
+        "size_h": human_size(stat.st_size),
+        "mtime_h": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+        "download_url": url_for("download", file_id=file_id, _external=True),
+        "view_url": url_for("public_file", file_id=file_id, _external=True),
+        "previewable": previewable,
+    }
+
+def list_all_files():
+    db = load_db()
     items = []
-    with os.scandir(UPLOAD_FOLDER) as it:
-        for entry in it:
-            if entry.is_file():
-                stat = entry.stat()
-                items.append({
-                    "name": entry.name,
-                    "size_h": human_size(stat.st_size),
-                    "mtime_h": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                })
-    items.sort(key=lambda x: x["mtime_h"], reverse=True)
+    for file_id in db.keys():
+        meta = file_meta(file_id)
+        if meta:
+            items.append(meta)
+    items.sort(key=lambda x: x.get("mtime_h", ""), reverse=True)
     return items
 
 # -----------------------
-# Routes
+# Admin auth
+# -----------------------
+def is_admin() -> bool:
+    return bool(session.get("is_admin"))
+
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not is_admin():
+            flash("Connexion admin requise.", "warning")
+            return redirect(url_for("admin_login"))
+        return fn(*args, **kwargs)
+    return wrapper
+
+# -----------------------
+# Routes INVITÉ (public)
 # -----------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
+    """
+    Page publique :
+    - upload sans login
+    - l'invité ne voit QUE son dernier fichier (via cookie/session)
+    - uploader à nouveau supprime son ancien fichier
+    - blocage IP possible
+    """
+    ip = get_client_ip()
+
+    # Vérifie IP bloquée AVANT toute action
+    blocked = load_blocked()
+    if ip and ip in blocked:
+        return redirect("https://www.google.fr"), 302
+
     if request.method == "POST":
-        files = request.files.getlist("files")
-        if not files or files == [None]:
-            flash(("warning", "Aucun fichier sélectionné."))
+        f = request.files.get("file")
+        if not f or f.filename == "":
+            flash("Aucun fichier sélectionné.", "warning")
             return redirect(url_for("index"))
 
-        saved = 0
-        for f in files:
-            if not f or f.filename == "":
-                continue
-            filename = secure_filename(f.filename)
-            f.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-            saved += 1
+        original = f.filename
+        safe_name = secure_filename(original)
+        if not safe_name:
+            flash("Nom de fichier invalide.", "danger")
+            return redirect(url_for("index"))
 
-        flash(("success", f"{saved} fichier(s) téléversé(s) avec succès."))
+        # ✅ Filtre extension (liste blanche)
+        if not allowed_file(safe_name):
+            allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+            flash(f"Extension non autorisée. Autorisées : {allowed}", "danger")
+            return redirect(url_for("index"))
+
+        # Supprime l'ancien fichier de CET invité (si existe)
+        old_id = session.get("guest_file_id")
+        if old_id:
+            delete_by_id(old_id)
+            session.pop("guest_file_id", None)
+
+        # Sauvegarde nouveau fichier (ID unique)
+        file_id = generate_file_id()
+        ext = safe_ext(safe_name)  # ex: ".png"
+        server_name = f"{file_id}{ext}"
+        dest = os.path.join(app.config["UPLOAD_FOLDER"], server_name)
+
+        while os.path.exists(dest):
+            file_id = generate_file_id()
+            server_name = f"{file_id}{ext}"
+            dest = os.path.join(app.config["UPLOAD_FOLDER"], server_name)
+
+        f.save(dest)
+
+        db = load_db()
+        db[file_id] = {
+            "original_name": original,
+            "server_name": server_name,
+            "uploaded_at": datetime.now().isoformat(timespec="seconds"),
+            "ip": ip
+        }
+        save_db(db)
+
+        session["guest_file_id"] = file_id
+        flash("Fichier upload ✅ (ton ancien fichier a été remplacé)", "success")
         return redirect(url_for("index"))
 
-    return render_template("index.html", files=list_files(), max_mb=int(MAX_CONTENT_LENGTH / (1024*1024)))
+    # GET : Affiche uniquement le fichier de l'invité (si existe)
+    guest_id = session.get("guest_file_id")
+    guest_file = file_meta(guest_id) if guest_id else None
 
-@app.route("/download/<path:filename>")
-def download(filename):
-    filename = os.path.basename(filename)
-    file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    if not os.path.isfile(file_path):
+    return render_template(
+        "index.html",
+        guest_file=guest_file,
+        max_mb=int(MAX_CONTENT_LENGTH / (1024 * 1024)),
+        admin=is_admin(), version=APP_VERSION
+    )
+
+@app.route("/view/<file_id>")
+def view_file(file_id):
+    """PUBLIC : ouvre dans le navigateur (fichier brut inline)"""
+    db = load_db()
+    meta = db.get(file_id)
+    if not meta:
         abort(404)
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename, as_attachment=True)
 
-@app.route("/delete", methods=["POST"])
-def delete_file():
-    filename = os.path.basename(request.form.get("filename", ""))
-    if not filename:
-        flash(("warning", "Nom de fichier manquant."))
-        return redirect(url_for("index"))
+    server_name = os.path.basename(meta.get("server_name", ""))
+    path = os.path.join(app.config["UPLOAD_FOLDER"], server_name)
+    if not os.path.isfile(path):
+        abort(404)
 
-    path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    if os.path.isfile(path):
-        os.remove(path)
-        flash(("success", f"« {filename} » supprimé."))
-    else:
-        flash(("warning", "Fichier introuvable."))
+    return send_from_directory(
+        app.config["UPLOAD_FOLDER"],
+        server_name,
+        as_attachment=False
+    )
+
+@app.route("/download/<file_id>")
+def download(file_id):
+    """PUBLIC : force le téléchargement"""
+    db = load_db()
+    meta = db.get(file_id)
+    if not meta:
+        abort(404)
+
+    server_name = os.path.basename(meta.get("server_name", ""))
+    original_name = meta.get("original_name", "download")
+    path = os.path.join(app.config["UPLOAD_FOLDER"], server_name)
+    if not os.path.isfile(path):
+        abort(404)
+
+    return send_from_directory(
+        app.config["UPLOAD_FOLDER"],
+        server_name,
+        as_attachment=True,
+        download_name=original_name
+    )
+
+@app.route("/file/<file_id>")
+def public_file(file_id):
+    """Page publique (HTML) qui affiche le fichier."""
+    db = load_db()
+    meta = db.get(file_id)
+    if not meta:
+        abort(404)
+
+    server_name = os.path.basename(meta.get("server_name", ""))
+    original_name = meta.get("original_name", "")
+    path = os.path.join(app.config["UPLOAD_FOLDER"], server_name)
+    if not os.path.isfile(path):
+        abort(404)
+
+    file_url = url_for("view_file", file_id=file_id)
+
+    return render_template(
+        "file.html",
+        file_url=file_url,
+        original_name=original_name
+    )
+
+# -----------------------
+# Routes ADMIN (banque + suppression)
+# -----------------------
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "POST":
+        user = (request.form.get("user") or "").strip()
+        pwd = (request.form.get("pass") or "").strip()
+
+        if secrets.compare_digest(user, ADMIN_USER) and secrets.compare_digest(pwd, ADMIN_PASS):
+            session["is_admin"] = True
+            flash("Admin connecté ✅", "success")
+            return redirect(url_for("admin_panel"))
+
+        flash("Identifiants incorrects ❌", "danger")
+        return redirect(url_for("admin_login"))
+
+    return render_template("admin_login.html")
+
+@app.route("/admin/logout", methods=["POST"])
+def admin_logout():
+    session.pop("is_admin", None)
+    flash("Déconnecté.", "success")
     return redirect(url_for("index"))
+
+@app.route("/admin", methods=["GET"])
+@admin_required
+def admin_panel():
+    return render_template("admin.html", files=list_all_files())
+
+@app.route("/admin/delete", methods=["POST"])
+@admin_required
+def admin_delete():
+    file_id = (request.form.get("file_id") or "").strip()
+    if not file_id:
+        flash("ID manquant.", "warning")
+        return redirect(url_for("admin_panel"))
+
+    ok = delete_by_id(file_id)
+    flash("Fichier supprimé ✅" if ok else "Fichier introuvable.", "success" if ok else "warning")
+    return redirect(url_for("admin_panel"))
+
+@app.route("/admin/block", methods=["POST"])
+@admin_required
+def admin_block_ip():
+    ip = (request.form.get("ip") or "").strip()
+    if not ip:
+        flash("IP manquante.", "warning")
+        return redirect(url_for("admin_panel"))
+
+    blocked = load_blocked()
+    if ip not in blocked:
+        blocked.append(ip)
+        save_blocked(blocked)
+        flash(f"IP bloquée ✅ : {ip}", "success")
+    else:
+        flash(f"IP déjà bloquée : {ip}", "info")
+
+    return redirect(url_for("admin_panel"))
+
+# -----------------------
+# Pages légales
+# -----------------------
+@app.route("/cgu")
+def cgu():
+    return render_template("cgu.html")
+
+@app.route("/mentions-legales")
+def mentions_legales():
+    return render_template("mentions_legales.html")
 
 # -----------------------
 # Lancement
 # -----------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=True)

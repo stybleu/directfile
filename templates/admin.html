@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% set title = "Admin - Banque de fichiers" %}
+{% block content %}
+
+<div class="d-flex flex-wrap gap-2 align-items-center justify-content-between mb-3">
+  <div>
+    <h1 class="h4 mb-0">Panel Admin</h1>
+    <div class="text-muted small">Banque de fichiers (liens publics) + suppression + blocage IP.</div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary btn-sm" href="{{ url_for('index') }}">Voir page publique</a>
+    <form method="post" action="{{ url_for('admin_logout') }}" class="m-0">
+      <button class="btn btn-outline-secondary btn-sm" type="submit">Déconnexion</button>
+    </form>
+  </div>
+</div>
+
+<!-- Blocage IP manuel -->
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <h2 class="h6 mb-2">Bloquer une IP manuellement</h2>
+    <form method="post" action="{{ url_for('admin_block_ip') }}" class="row g-2 align-items-end">
+      <div class="col-12 col-md-6">
+        <label class="form-label">IP</label>
+        <input class="form-control" name="ip" placeholder="ex: 82.64.xxx.xxx" required>
+      </div>
+      <div class="col-12 col-md-3">
+        <button class="btn btn-warning w-100" type="submit">Bloquer</button>
+      </div>
+    </form>
+    <div class="text-muted small mt-2">
+      Astuce : tu peux aussi bloquer directement depuis un fichier ci-dessous.
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h2 class="h6 mb-3">Fichiers (banque de données)</h2>
+
+    {% if files %}
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr>
+              <th>Nom original</th>
+              <th>Taille</th>
+              <th>Date</th>
+              <th>IP</th>
+              <th>Lien public</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for f in files %}
+              <tr>
+                <td class="fw-semibold">{{ f.original }}</td>
+                <td>{{ f.size_h }}</td>
+                <td class="text-muted">{{ f.mtime_h }}</td>
+
+                <td>
+                  {% if f.ip %}
+                    <code>{{ f.ip }}</code>
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+
+                <td style="min-width:360px;">
+                  <div class="input-group input-group-sm">
+                    <input class="form-control" value="{{ f.download_url }}" readonly>
+                    {% if f.previewable %}
+                      <a class="btn btn-outline-success" href="{{ f.view_url }}" target="_blank">Ouvrir</a>
+                    {% endif %}
+                    <a class="btn btn-outline-primary" href="{{ f.download_url }}">Télécharger</a>
+                  </div>
+                </td>
+
+                <td class="text-end">
+                  <div class="d-flex justify-content-end gap-2 flex-wrap">
+
+                    {% if f.ip %}
+                    <form method="post" action="{{ url_for('admin_block_ip') }}" class="m-0"
+                          onsubmit="return confirm('Bloquer cette IP ?');">
+                      <input type="hidden" name="ip" value="{{ f.ip }}">
+                      <button class="btn btn-warning btn-sm" type="submit">Bloquer IP</button>
+                    </form>
+                    {% endif %}
+
+                    <form method="post" action="{{ url_for('admin_delete') }}" class="m-0"
+                          onsubmit="return confirm('Supprimer définitivement ce fichier ?');">
+                      <input type="hidden" name="file_id" value="{{ f.id }}">
+                      <button class="btn btn-danger btn-sm" type="submit">Supprimer</button>
+                    </form>
+
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted">Aucun fichier dans la banque.</div>
+    {% endif %}
+
+  </div>
+</div>
+
+{% endblock %}
