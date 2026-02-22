@@ -1,0 +1,9 @@
+# Runtime data (DirectFile)
+tmp/
+files.json
+blocked_ips.json
+
+# Python
+__pycache__/
+*.pyc
+.env
