@@ -69,7 +69,11 @@
 
                 <td style="min-width:360px;">
                   <div class="input-group input-group-sm">
-                    <input class="form-control" value="{{ f.view_url }}" readonly onclick="this.select()">
+                    <input id="publicLink"
+                      class="form-control"
+                      value="{{ f.view_url }}"
+                      readonly
+                      onclick="this.select()"">
                     <button type="button" class="btn btn-outline-primary" onclick="copyLink(event)">
                       Copier
                     </button>
