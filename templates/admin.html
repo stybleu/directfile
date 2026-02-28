@@ -69,6 +69,7 @@
 
                 <td style="min-width:360px;">
                   <div class="input-group input-group-sm">
+                    <div class="input-group">
                     <input id="publicLink"
                       class="form-control"
                       value="{{ f.view_url }}"
@@ -77,6 +78,7 @@
                     <button type="button" class="btn btn-outline-primary" onclick="copyLink(event)">
                       Copier
                     </button>
+                    </div>
                     {% if f.previewable %}
                       <a class="btn btn-outline-success" href="{{ f.view_url }}" target="_blank">Ouvrir</a>
                     {% endif %}
