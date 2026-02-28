@@ -70,12 +70,12 @@
                 <td style="min-width:360px;">
                   <div class="input-group input-group-sm">
                     <div class="input-group">
-                    <input id="publicLink"
-                      class="form-control"
-                      value="{{ f.view_url }}"
-                      readonly
-                      onclick="this.select()"">
-                    <button type="button" class="btn btn-outline-primary" onclick="copyLink(event)">
+                    <input
+  class="form-control public-link"
+  value="{{ f.view_url }}"
+  readonly
+  onclick="this.select()">
+                    <button type="button" class="btn btn-outline-primary" onclick="copyLink(this)">
                       Copier
                     </button>
                     </div>
@@ -117,15 +117,19 @@
   </div>
 </div>
 <script>
-  function copyLink(e){
-    e.preventDefault();
-    const input = document.getElementById("publicLink");
-    if(!input) return;
-    input.focus();
-    input.select();
-    input.setSelectionRange(0, 999999);
-    (navigator.clipboard?.writeText(input.value) || Promise.reject())
-      .catch(() => document.execCommand("copy"));
-  }
+function copyLink(btn){
+  const group = btn.closest(".input-group");
+  if(!group) return;
+
+  const input = group.querySelector(".public-link");
+  if(!input) return;
+
+  input.focus();
+  input.select();
+  input.setSelectionRange(0, 999999);
+
+  navigator.clipboard?.writeText(input.value)
+    .catch(() => document.execCommand("copy"));
+}
 </script>
 {% endblock %}
