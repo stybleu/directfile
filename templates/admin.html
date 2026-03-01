@@ -1,15 +1,10 @@
 {% extends "base.html" %}
 {% set title = "Admin - Banque de fichiers" %}
-{% extends "base.html" %}
-{% set title = "Admin - Banque de fichiers" %}
 
 {% block head %}
 <meta name="robots" content="noindex, nofollow, noarchive">
 {% endblock %}
 
-{% block content %}
-...
-{% endblock %}
 {% block content %}
 
 <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between mb-3">
@@ -80,15 +75,16 @@
                 <td style="min-width:360px;">
                   <div class="input-group input-group-sm">
                     <div class="input-group">
-                    <input
-  class="form-control public-link"
-  value="{{ f.view_url }}"
-  readonly
-  onclick="this.select()">
-                    <button type="button" class="btn btn-outline-primary" onclick="copyLink(this)">
-                      Copier
-                    </button>
+                      <input
+                        class="form-control public-link"
+                        value="{{ f.view_url }}"
+                        readonly
+                        onclick="this.select()">
+                      <button type="button" class="btn btn-outline-primary" onclick="copyLink(this)">
+                        Copier
+                      </button>
                     </div>
+
                     {% if f.previewable %}
                       <a class="btn btn-outline-success" href="{{ f.view_url }}" target="_blank">Ouvrir</a>
                     {% endif %}
@@ -100,11 +96,11 @@
                   <div class="d-flex justify-content-end gap-2 flex-wrap">
 
                     {% if f.ip %}
-                    <form method="post" action="{{ url_for('admin_block_ip') }}" class="m-0"
-                          onsubmit="return confirm('Bloquer cette IP ?');">
-                      <input type="hidden" name="ip" value="{{ f.ip }}">
-                      <button class="btn btn-warning btn-sm" type="submit">Bloquer IP</button>
-                    </form>
+                      <form method="post" action="{{ url_for('admin_block_ip') }}" class="m-0"
+                            onsubmit="return confirm('Bloquer cette IP ?');">
+                        <input type="hidden" name="ip" value="{{ f.ip }}">
+                        <button class="btn btn-warning btn-sm" type="submit">Bloquer IP</button>
+                      </form>
                     {% endif %}
 
                     <form method="post" action="{{ url_for('admin_delete') }}" class="m-0"
@@ -126,6 +122,7 @@
 
   </div>
 </div>
+
 <script>
 function copyLink(btn){
   const group = btn.closest(".input-group");
@@ -142,4 +139,5 @@ function copyLink(btn){
     .catch(() => document.execCommand("copy"));
 }
 </script>
+
 {% endblock %}
