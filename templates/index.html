@@ -17,13 +17,15 @@
   <!-- Header responsive -->
   <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between mb-3">
     <div>
-      <h1>Héberger une image anonymement sans compte</h1>
+      <h1>Héberger une image anonymement sans inscription.</h1>
     </div>
 
     <div class="d-flex gap-2">
+
       {% if admin %}
         <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin_panel') }}">Admin</a>
       {% endif %}
+
     </div>
   </div>
 
