@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin
+Disallow: /admin_panel
+Disallow: /admin_login
